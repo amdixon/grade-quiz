@@ -72,7 +72,8 @@ export function parseRoster(text: string): Roster {
   const cell = (row: string[], idx: number) => (idx >= 0 ? (row[idx] ?? "").trim() : "");
 
   function ensureParent(row: string[], pc: (typeof pCols)[number]): string | null {
-    const name = fullName(cell(row, pc.first), cell(row, pc.last));
+    const first = cell(row, pc.first);
+    const name = fullName(first, cell(row, pc.last));
     if (!name) return null;
     const key = name.toLowerCase();
     if (parentIdByName[key]) return parentIdByName[key];
@@ -83,6 +84,7 @@ export function parseRoster(text: string): Roster {
       id,
       role: "parent",
       name,
+      firstName: first || name,
       photo: cell(row, pc.photo) || undefined,
       job: cell(row, pc.job) || undefined,
       company: cell(row, pc.company) || undefined,
@@ -95,7 +97,8 @@ export function parseRoster(text: string): Roster {
 
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
-    const childName = fullName(cell(row, ci.childFirst), cell(row, ci.childLast));
+    const childFirst = cell(row, ci.childFirst);
+    const childName = fullName(childFirst, cell(row, ci.childLast));
     if (!childName) continue;
 
     let childId = `c-${slug(childName)}`;
@@ -105,6 +108,7 @@ export function parseRoster(text: string): Roster {
       id: childId,
       role: "child",
       name: childName,
+      firstName: childFirst || childName,
       photo: cell(row, ci.childPhoto) || undefined,
       grade: cell(row, ci.childGrade) || undefined,
       gradeColor: cell(row, ci.childGradeColor) || undefined,

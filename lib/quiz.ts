@@ -29,6 +29,7 @@ export const MODES: ModeInfo[] = [
 
 export interface Question {
   mode: QuizMode;
+  subjectId: string; // the person this question is about (for de-duping)
   prompt: string;
   subtitle?: string;
   photo?: string;
@@ -90,11 +91,15 @@ export function isEligible(r: Roster, mode: QuizMode): boolean {
   }
 }
 
+// Quiz prompts and options use first names only — full names would let you
+// cheat parent/child questions by matching surnames.
+const fn = (p: Person) => p.firstName;
+
 function genOne(r: Roster, mode: QuizMode): Question | null {
   const kids = children(r);
   const ps = parents(r);
-  const parentNames = ps.map((p) => p.name);
-  const childNames = kids.map((k) => k.name);
+  const parentFirst = ps.map(fn);
+  const childFirst = kids.map(fn);
 
   switch (mode) {
     case "child-to-parent": {
@@ -102,56 +107,56 @@ function genOne(r: Roster, mode: QuizMode): Question | null {
       if (!eligible.length) return null;
       const child = pick(eligible);
       const childParents = related(r, child);
-      const correct = pick(childParents).name;
-      const built = buildOptions(correct, parentNames.filter((n) => !childParents.some((p) => p.name === n)));
+      const correct = fn(pick(childParents));
+      const built = buildOptions(correct, ps.filter((p) => !childParents.includes(p)).map(fn));
       if (!built) return null;
-      return { mode, prompt: `Who is a parent of ${child.name}?`, ...built };
+      return { mode, subjectId: child.id, prompt: `Who is a parent of ${fn(child)}?`, ...built };
     }
     case "parent-to-child": {
       const eligible = ps.filter((p) => p.relatedIds.length);
       if (!eligible.length) return null;
       const parent = pick(eligible);
       const kidsOf = related(r, parent);
-      const correct = pick(kidsOf).name;
-      const built = buildOptions(correct, childNames.filter((n) => !kidsOf.some((k) => k.name === n)));
+      const correct = fn(pick(kidsOf));
+      const built = buildOptions(correct, kids.filter((k) => !kidsOf.includes(k)).map(fn));
       if (!built) return null;
-      return { mode, prompt: `Whose parent is ${parent.name}?`, ...built };
+      return { mode, subjectId: parent.id, prompt: `Whose parent is ${fn(parent)}?`, ...built };
     }
     case "child-name-photo": {
       const eligible = kids.filter((k) => k.photo);
       if (!eligible.length) return null;
       const child = pick(eligible);
-      const built = buildOptions(child.name, childNames);
+      const built = buildOptions(fn(child), childFirst);
       if (!built) return null;
-      return { mode, prompt: "Which child is this?", photo: child.photo, ...built };
+      return { mode, subjectId: child.id, prompt: "Which child is this?", photo: child.photo, ...built };
     }
     case "parent-name-photo": {
       const eligible = ps.filter((p) => p.photo);
       if (!eligible.length) return null;
       const parent = pick(eligible);
-      const built = buildOptions(parent.name, parentNames);
+      const built = buildOptions(fn(parent), parentFirst);
       if (!built) return null;
-      return { mode, prompt: "Which parent is this?", photo: parent.photo, ...built };
+      return { mode, subjectId: parent.id, prompt: "Which parent is this?", photo: parent.photo, ...built };
     }
     case "child-parents-photo": {
       const eligible = kids.filter((k) => k.photo && k.relatedIds.length);
       if (!eligible.length) return null;
       const child = pick(eligible);
       const childParents = related(r, child);
-      const correct = pick(childParents).name;
-      const built = buildOptions(correct, parentNames.filter((n) => !childParents.some((p) => p.name === n)));
+      const correct = fn(pick(childParents));
+      const built = buildOptions(correct, ps.filter((p) => !childParents.includes(p)).map(fn));
       if (!built) return null;
-      return { mode, prompt: "Who is a parent of this child?", photo: child.photo, ...built };
+      return { mode, subjectId: child.id, prompt: "Who is a parent of this child?", photo: child.photo, ...built };
     }
     case "parent-child-photo": {
       const eligible = ps.filter((p) => p.photo && p.relatedIds.length);
       if (!eligible.length) return null;
       const parent = pick(eligible);
       const kidsOf = related(r, parent);
-      const correct = pick(kidsOf).name;
-      const built = buildOptions(correct, childNames.filter((n) => !kidsOf.some((k) => k.name === n)));
+      const correct = fn(pick(kidsOf));
+      const built = buildOptions(correct, kids.filter((k) => !kidsOf.includes(k)).map(fn));
       if (!built) return null;
-      return { mode, prompt: "Whose parent is this?", photo: parent.photo, ...built };
+      return { mode, subjectId: parent.id, prompt: "Whose parent is this?", photo: parent.photo, ...built };
     }
     case "parent-job": {
       const eligible = ps.filter((p) => jobLabel(p));
@@ -161,33 +166,45 @@ function genOne(r: Roster, mode: QuizMode): Question | null {
       const pool = eligible.map(jobLabel).filter((j) => j !== correct);
       const built = buildOptions(correct, pool);
       if (!built) return null;
-      return { mode, prompt: `What does ${parent.name} do?`, ...built };
+      return { mode, subjectId: parent.id, prompt: `What does ${fn(parent)} do?`, ...built };
     }
   }
 }
 
 // Generate a session of up to `count` questions across the selected modes.
-// Avoids immediate repeats where possible; skips modes that can't produce one.
+// Two rules:
+//   1. Never repeat the same mode back-to-back.
+//   2. Never reuse the same (mode, person) question anywhere in the quiz.
+// Both relax gracefully if a small roster can't otherwise reach `count`.
 export function generateQuiz(r: Roster, modes: QuizMode[], count: number): Question[] {
   const usable = modes.filter((m) => isEligible(r, m));
   if (!usable.length) return [];
+
   const out: Question[] = [];
-  let lastKey = "";
-  let misses = 0;
-  while (out.length < count && misses < count * 4 + 20) {
-    const mode = pick(usable);
-    const q = genOne(r, mode);
-    if (!q) {
-      misses++;
-      continue;
+  const usedKeys = new Set<string>();
+  const keyOf = (q: Question) => `${q.mode}:${q.subjectId}`;
+  let lastMode: QuizMode | null = null;
+
+  // Draw one fresh (unused-key) question. When `avoidLastMode`, skip the
+  // previous question's mode so the same type never repeats in a row.
+  function draw(avoidLastMode: boolean): Question | null {
+    for (let i = 0; i < 80; i++) {
+      let pool = usable;
+      if (avoidLastMode && lastMode && usable.length > 1) {
+        pool = usable.filter((m) => m !== lastMode);
+      }
+      const q = genOne(r, pick(pool));
+      if (q && !usedKeys.has(keyOf(q))) return q;
     }
-    const key = `${q.mode}|${q.prompt}|${q.photo ?? ""}`;
-    if (key === lastKey && usable.length > 1) {
-      misses++;
-      continue;
-    }
-    lastKey = key;
+    return null;
+  }
+
+  while (out.length < count) {
+    const q = draw(true) ?? draw(false); // relax the no-repeat-mode rule before giving up
+    if (!q) break; // no fresh questions remain at all
+    usedKeys.add(keyOf(q));
     out.push(q);
+    lastMode = q.mode;
   }
   return out;
 }

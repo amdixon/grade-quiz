@@ -3,7 +3,8 @@ export type Role = "parent" | "child";
 export interface Person {
   id: string;
   role: Role;
-  name: string;
+  name: string; // full display name (roster)
+  firstName: string; // first name only (quiz prompts/options, to avoid surname matching)
   photo?: string; // filename under /public/photos
   job?: string; // parents only
   company?: string; // parents only

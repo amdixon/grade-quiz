@@ -33,14 +33,17 @@ Everything lives in `public/`:
 ### CSV columns
 
 ```
-child_name, child_photo,
-parent1_name, parent1_photo, parent1_job, parent1_company,
-parent2_name, parent2_photo, parent2_job, parent2_company
+child_first_name, child_last_name, child_photo, child_grade, child_grade_color,
+parent1_first_name, parent1_last_name, parent1_photo, parent1_job, parent1_company,
+parent2_first_name, parent2_last_name, parent2_photo, parent2_job, parent2_company
 ```
 
-- `*_photo` is just a filename that exists in `public/photos/` (e.g. `emma-smith.jpg`). Leave blank for no photo — that person simply won't appear in photo-based questions.
+- Names are split into first/last; the app joins them for display (multi-word surnames like `van der Gaast` are fine).
+- `*_photo` is just a filename that exists in `public/photos/` (e.g. `octavia-dixon.jpg`). Leave blank for no photo — that person simply won't appear in photo-based questions.
+- `child_grade` / `child_grade_color` (e.g. `G1`, `Blue`) are parsed and stored but not shown in the UI yet.
 - A single-parent family just leaves the `parent2_*` columns blank.
-- Any image format the browser supports works (`.jpg`, `.png`, `.webp`, …).
+- Any image format the browser supports works (`.jpg`, `.jpeg`, `.png`, `.webp`, …).
+- Parents are deduped by full name, so siblings linked to the same parent share one record.
 
 ### Swapping in your real data
 
